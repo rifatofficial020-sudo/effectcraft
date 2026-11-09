@@ -1956,17 +1956,22 @@ fn begin_rows(app: &mut EffectcraftApp, ui: &mut egui::Ui, tl: Tl) -> Rw {
 fn timeline_outline_splitter(app: &mut EffectcraftApp, ui: &mut egui::Ui, tl: &Tl) {
     const MIN_OUTLINE_WIDTH: f32 = 260.0;
     const MIN_GRAPH_WIDTH: f32 = 200.0;
-    const HANDLE_WIDTH: f32 = 10.0;
+    const HANDLE_WIDTH: f32 = 12.0;
 
-    let x = tl.graph_x0 - 1.0;
+    // Keep this ID stable between frames. A splitter is a persistent interaction;
+    // `Id::unique()` is not appropriate for an interaction whose drag state spans frames.
+    let splitter_id = ui.id().with("timeline_outline_splitter");
+    let start_width_id = splitter_id.with("start_width");
+
+    let divider_x = tl.rect.min.x + app.ui.timeline.columns_w;
     let handle_rect = Rect::from_min_max(
-        pos2(x - HANDLE_WIDTH * 0.5, tl.rect.min.y),
-        pos2(x + HANDLE_WIDTH * 0.5, tl.rect.max.y),
+        pos2(divider_x - HANDLE_WIDTH * 0.5, tl.rect.min.y),
+        pos2(divider_x + HANDLE_WIDTH * 0.5, tl.rect.max.y),
     );
 
-    let splitter_id = egui::Id::unique("effectcraft.timeline.outline_splitter");
-    let start_width_id = egui::Id::unique("effectcraft.timeline.outline_splitter.start_width");
-    let response = ui.interact(handle_rect, splitter_id, Sense::drag());
+    // Register the splitter after the timeline's other widgets so the narrow handle
+    // receives pointer input instead of the layer/graph background underneath it.
+    let response = ui.interact(handle_rect, splitter_id, Sense::click_and_drag());
 
     if response.drag_started() {
         ui.ctx().data_mut(|data| {
@@ -1975,16 +1980,22 @@ fn timeline_outline_splitter(app: &mut EffectcraftApp, ui: &mut egui::Ui, tl: &T
     }
 
     if response.dragged() {
+        // `drag_delta()` is measured from the start of this drag, so always apply it
+        // to the width captured at drag start (not to the already-updated width).
         let start_width = ui
             .ctx()
             .data(|data| data.get_temp::<f32>(start_width_id));
 
         if let Some(start_width) = start_width {
-            let max_width =
-                (tl.rect.width() - GUTTER_W - MIN_GRAPH_WIDTH).max(MIN_OUTLINE_WIDTH);
-            app.ui.timeline.columns_w =
-                (start_width + response.drag_delta().x).clamp(MIN_OUTLINE_WIDTH, max_width);
-            ui.ctx().request_repaint();
+            let max_width = (tl.rect.width() - GUTTER_W - MIN_GRAPH_WIDTH)
+                .max(MIN_OUTLINE_WIDTH);
+            let new_width = (start_width + response.drag_delta().x)
+                .clamp(MIN_OUTLINE_WIDTH, max_width);
+
+            if (app.ui.timeline.columns_w - new_width).abs() > f32::EPSILON {
+                app.ui.timeline.columns_w = new_width;
+                ui.ctx().request_repaint();
+            }
         }
     }
 
@@ -2002,20 +2013,20 @@ fn timeline_outline_splitter(app: &mut EffectcraftApp, ui: &mut egui::Ui, tl: &T
         Color32::from_rgb(75, 85, 100)
     };
 
-    // Draw a clear divider and a small grip at its vertical centre.
     let painter = ui.painter().with_clip_rect(tl.rect);
     painter.line_segment(
-        [pos2(x, tl.rect.min.y), pos2(x, tl.rect.max.y)],
+        [pos2(divider_x, tl.rect.min.y), pos2(divider_x, tl.rect.max.y)],
         Stroke::new(
             if response.hovered() || response.dragged() { 2.0 } else { 1.0 },
             color,
         ),
     );
 
+    // Three small grip marks make the resize target discoverable.
     let grip_y = tl.rect.center().y;
-    for offset in [-4.0_f32, 0.0, 4.0] {
+    for offset in [-5.0_f32, 0.0, 5.0] {
         painter.line_segment(
-            [pos2(x - 1.5, grip_y + offset), pos2(x + 1.5, grip_y + offset)],
+            [pos2(divider_x - 1.5, grip_y + offset), pos2(divider_x + 1.5, grip_y + offset)],
             Stroke::new(1.0, color),
         );
     }
