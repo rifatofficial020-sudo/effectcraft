@@ -1,0 +1,77 @@
+
+name: Build EffectCraft Windows x64
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-x64-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-windows-x64:
+    name: Build Windows x64 EXE
+    runs-on: windows-latest
+
+    env:
+      CARGO_TERM_COLOR: always
+
+    steps:
+      # 1. Checkout source code
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # 2. Install Rust toolchain
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      # 3. Cache Rust dependencies
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: windows-x64-msvc
+
+      # 4. Display Rust information
+      - name: Show Rust version
+        run: |
+          rustc --version
+          cargo --version
+          rustup target list --installed
+
+      # 5. Build EffectCraft
+      - name: Build Release
+        run: cargo build --locked --release --target x86_64-pc-windows-msvc -p effectcraft
+
+      # 6. Verify executable
+      - name: Verify EXE
+        shell: pwsh
+        run: |
+          $exe = "target/x86_64-pc-windows-msvc/release/effectcraft.exe"
+
+          if (!(Test-Path $exe)) {
+            Write-Error "effectcraft.exe was not generated!"
+            exit 1
+          }
+
+          Get-Item $exe | Format-List FullName, Length
+
+      # 7. Upload executable
+      - name: Upload Windows x64 EXE
+        uses: actions/upload-artifact@v4
+        with:
+          name: EffectCraft-Windows-x64
+          path: target/x86_64-pc-windows-msvc/release/effectcraft.exe
+          if-no-files-found: error
+          compression-level: 9
+          retention-days: 30
