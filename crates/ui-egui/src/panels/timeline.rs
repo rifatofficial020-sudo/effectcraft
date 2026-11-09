@@ -1776,7 +1776,19 @@ fn layout(app: &mut EffectcraftApp, ui: &egui::Ui, rect: Rect, cid: ItemId, comp
     let colhdr_h = 22.0;
     let footer_h = 24.0;
     let vis = Vis::of(&app.ui.timeline);
-    let left_w = (vis.fixed() + 190.0).clamp(420.0, (rect.width() * 0.72).max(420.0));
+
+    // The layer-list / time-graph divider is user-resizable. `columns_w` is
+    // already serialized by TimelineState, so the chosen width survives restarts.
+    const MIN_OUTLINE_WIDTH: f32 = 260.0;
+    const MIN_GRAPH_WIDTH: f32 = 200.0;
+    let max_outline_width =
+        (rect.width() - GUTTER_W - MIN_GRAPH_WIDTH).max(MIN_OUTLINE_WIDTH);
+    let left_w = app
+        .ui
+        .timeline
+        .columns_w
+        .clamp(MIN_OUTLINE_WIDTH, max_outline_width);
+    app.ui.timeline.columns_w = left_w;
     // Columns wider than the pane scroll horizontally (Shift+wheel / trackpad over the outline,
     // or the scroll bar above the footer); the name column keeps its minimum width.
     let natural_w = vis.fixed() + 190.0;
@@ -1937,6 +1949,84 @@ fn begin_rows(app: &mut EffectcraftApp, ui: &mut egui::Ui, tl: Tl) -> Rw {
 /// The Timeline panel for the active composition inside `rect`: draws the header, ruler, work
 /// area and cache bars, the layer rows with their switch and value cells, the time graph and its
 /// keys, and the footer; and turns this frame's clicks, drags and drops into commands. Without an
+/// Draggable divider between the layer list and the time graph.
+///
+/// The starting width is kept in egui's temporary interaction data while dragging;
+/// the resulting width is written to `TimelineState::columns_w`, which is serialized.
+fn timeline_outline_splitter(app: &mut EffectcraftApp, ui: &mut egui::Ui, tl: &Tl) {
+    const MIN_OUTLINE_WIDTH: f32 = 260.0;
+    const MIN_GRAPH_WIDTH: f32 = 200.0;
+    const HANDLE_WIDTH: f32 = 10.0;
+
+    let x = tl.graph_x0 - 1.0;
+    let handle_rect = Rect::from_min_max(
+        pos2(x - HANDLE_WIDTH * 0.5, tl.rect.min.y),
+        pos2(x + HANDLE_WIDTH * 0.5, tl.rect.max.y),
+    );
+
+    let splitter_id = egui::Id::new("effectcraft.timeline.outline_splitter");
+    let start_width_id = egui::Id::new("effectcraft.timeline.outline_splitter.start_width");
+    let response = ui.interact(handle_rect, splitter_id, Sense::drag());
+
+    if response.drag_started() {
+        ui.ctx().data_mut(|data| {
+            data.insert_temp(start_width_id, app.ui.timeline.columns_w);
+        });
+    }
+
+    if response.dragged() {
+        let start_width = ui
+            .ctx()
+            .data(|data| data.get_temp::<f32>(start_width_id));
+
+        if let Some(start_width) = start_width {
+            let max_width =
+                (tl.rect.width() - GUTTER_W - MIN_GRAPH_WIDTH).max(MIN_OUTLINE_WIDTH);
+            app.ui.timeline.columns_w =
+                (start_width + response.drag_delta().x).clamp(MIN_OUTLINE_WIDTH, max_width);
+            ui.ctx().request_repaint();
+        }
+    }
+
+    if response.drag_stopped() {
+        ui.ctx().data_mut(|data| {
+            data.remove::<f32>(start_width_id);
+        });
+    }
+
+    let color = if response.dragged() {
+        Color32::from_rgb(65, 155, 255)
+    } else if response.hovered() {
+        Color32::from_rgb(155, 170, 190)
+    } else {
+        Color32::from_rgb(75, 85, 100)
+    };
+
+    // Draw a clear divider and a small grip at its vertical centre.
+    let painter = ui.painter().with_clip_rect(tl.rect);
+    painter.line_segment(
+        [pos2(x, tl.rect.min.y), pos2(x, tl.rect.max.y)],
+        Stroke::new(
+            if response.hovered() || response.dragged() { 2.0 } else { 1.0 },
+            color,
+        ),
+    );
+
+    let grip_y = tl.rect.center().y;
+    for offset in [-4.0_f32, 0.0, 4.0] {
+        painter.line_segment(
+            [pos2(x - 1.5, grip_y + offset), pos2(x + 1.5, grip_y + offset)],
+            Stroke::new(1.0, color),
+        );
+    }
+
+    if response.hovered() || response.dragged() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
+    }
+
+    response.on_hover_text("Drag to resize the layer list and time graph");
+}
+
 /// active comp it shows a hint, and dropping footage on it creates a composition. Most edits
 /// use [`crate::menus::invoke`]; time, switch and work-area gestures call `Session::execute`
 /// directly and ignore errors. Reported failures go to `app.ui.status`. UI state (scroll, zoom,
@@ -2004,6 +2094,7 @@ pub fn show(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect) {
     comp_markers_ui(app, ui, g);
     hand_tool_pan(app, ui, g);
     drop_targets(app, ui, g);
+    timeline_outline_splitter(app, ui, &rw.tl);
     let Rw { tl, ui_actions, .. } = rw;
     apply_ui_acts(app, &tl.comp, ui_actions);
     apply_actions(app, ui, &tl.ctx, tl.actions);
