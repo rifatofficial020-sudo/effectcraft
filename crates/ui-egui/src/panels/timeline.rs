@@ -1964,8 +1964,8 @@ fn timeline_outline_splitter(app: &mut EffectcraftApp, ui: &mut egui::Ui, tl: &T
         pos2(x + HANDLE_WIDTH * 0.5, tl.rect.max.y),
     );
 
-    let splitter_id = egui::Id::new("effectcraft.timeline.outline_splitter");
-    let start_width_id = egui::Id::new("effectcraft.timeline.outline_splitter.start_width");
+    let splitter_id = egui::Id::unique("effectcraft.timeline.outline_splitter");
+    let start_width_id = egui::Id::unique("effectcraft.timeline.outline_splitter.start_width");
     let response = ui.interact(handle_rect, splitter_id, Sense::drag());
 
     if response.drag_started() {
