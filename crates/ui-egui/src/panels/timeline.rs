@@ -1961,7 +1961,7 @@ fn timeline_outline_splitter(app: &mut EffectcraftApp, ui: &mut egui::Ui, tl: &T
 
     // The interaction ID must be stable across frames. The drag offset is stored
     // separately so grabbing either edge of the handle does not make the divider jump.
-    let splitter_id = ui.id().with("timeline_outline_splitter");
+    let splitter_id = ui.scope_id().with("timeline_outline_splitter");
     let drag_offset_id = splitter_id.with("drag_pointer_offset");
 
     let max_width = (tl.rect.width() - GUTTER_W - MIN_GRAPH_WIDTH)
