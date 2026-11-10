@@ -1948,66 +1948,75 @@ fn begin_rows(app: &mut EffectcraftApp, ui: &mut egui::Ui, tl: Tl) -> Rw {
 
 /// The Timeline panel for the active composition inside `rect`: draws the header, ruler, work
 /// area and cache bars, the layer rows with their switch and value cells, the time graph and its
-/// keys, and the footer; and turns this frame's clicks, drags and drops into commands. Without an
-/// Draggable divider between the layer list and the time graph.
+/// keys, and the footer; and turns this frame's clicks, drags and drops into commands. A draggable
+/// divider separates the layer list from the time graph.
 ///
 /// The starting width is kept in egui's temporary interaction data while dragging;
 /// the resulting width is written to `TimelineState::columns_w`, which is serialized.
 fn timeline_outline_splitter(app: &mut EffectcraftApp, ui: &mut egui::Ui, tl: &Tl) {
+    // Keep these limits identical to the values used by `layout()`.
     const MIN_OUTLINE_WIDTH: f32 = 260.0;
     const MIN_GRAPH_WIDTH: f32 = 200.0;
-    const HANDLE_WIDTH: f32 = 12.0;
+    const HANDLE_WIDTH: f32 = 14.0;
 
-    // Keep this ID stable between frames. A splitter is a persistent interaction;
-    // `Id::unique()` is not appropriate for an interaction whose drag state spans frames.
+    // The interaction ID must be stable across frames. The drag offset is stored
+    // separately so grabbing either edge of the handle does not make the divider jump.
     let splitter_id = ui.id().with("timeline_outline_splitter");
-    let start_width_id = splitter_id.with("start_width");
+    let drag_offset_id = splitter_id.with("drag_pointer_offset");
 
-    let divider_x = tl.rect.min.x + app.ui.timeline.columns_w;
+    let max_width = (tl.rect.width() - GUTTER_W - MIN_GRAPH_WIDTH)
+        .max(MIN_OUTLINE_WIDTH);
+    let current_width = app
+        .ui
+        .timeline
+        .columns_w
+        .clamp(MIN_OUTLINE_WIDTH, max_width);
+    let divider_x = tl.rect.min.x + current_width;
+
+    // Make the whole divider easy to grab, like the layer/time-panel divider in AE.
     let handle_rect = Rect::from_min_max(
         pos2(divider_x - HANDLE_WIDTH * 0.5, tl.rect.min.y),
         pos2(divider_x + HANDLE_WIDTH * 0.5, tl.rect.max.y),
     );
-
-    // Register the splitter after the timeline's other widgets so the narrow handle
-    // receives pointer input instead of the layer/graph background underneath it.
     let response = ui.interact(handle_rect, splitter_id, Sense::click_and_drag());
 
     if response.drag_started() {
-        ui.ctx().data_mut(|data| {
-            data.insert_temp(start_width_id, app.ui.timeline.columns_w);
-        });
+        if let Some(pointer_pos) = response.interact_pointer_pos() {
+            ui.ctx().data_mut(|data| {
+                data.insert_temp(drag_offset_id, divider_x - pointer_pos.x);
+            });
+        }
     }
 
-    if response.dragged() {
-        // `drag_delta()` is measured from the start of this drag, so always apply it
-        // to the width captured at drag start (not to the already-updated width).
-        let start_width = ui
+    if response.dragged()
+        && let Some(pointer_pos) = response.interact_pointer_pos()
+    {
+        let pointer_offset = ui
             .ctx()
-            .data(|data| data.get_temp::<f32>(start_width_id));
-
-        if let Some(start_width) = start_width {
-            let max_width = (tl.rect.width() - GUTTER_W - MIN_GRAPH_WIDTH)
-                .max(MIN_OUTLINE_WIDTH);
-            let new_width = (start_width + response.drag_delta().x)
-                .clamp(MIN_OUTLINE_WIDTH, max_width);
-
-            if (app.ui.timeline.columns_w - new_width).abs() > f32::EPSILON {
-                app.ui.timeline.columns_w = new_width;
-                ui.ctx().request_repaint();
-            }
+            .data(|data| data.get_temp::<f32>(drag_offset_id))
+            .unwrap_or(0.0);
+        // Use the pointer's absolute position rather than accumulating drag_delta.
+        // This avoids frame-rate-dependent movement and keeps the divider attached
+        // to the pointer for the entire drag.
+        let new_width = (pointer_pos.x + pointer_offset - tl.rect.min.x)
+            .clamp(MIN_OUTLINE_WIDTH, max_width);
+        if (app.ui.timeline.columns_w - new_width).abs() > 0.25 {
+            app.ui.timeline.columns_w = new_width;
+            ui.ctx().request_repaint();
         }
     }
 
     if response.drag_stopped() {
         ui.ctx().data_mut(|data| {
-            data.remove::<f32>(start_width_id);
+            data.remove::<f32>(drag_offset_id);
         });
     }
 
-    let color = if response.dragged() {
+    let active = response.dragged();
+    let hovered = response.hovered();
+    let color = if active {
         Color32::from_rgb(65, 155, 255)
-    } else if response.hovered() {
+    } else if hovered {
         Color32::from_rgb(155, 170, 190)
     } else {
         Color32::from_rgb(75, 85, 100)
@@ -2015,23 +2024,26 @@ fn timeline_outline_splitter(app: &mut EffectcraftApp, ui: &mut egui::Ui, tl: &T
 
     let painter = ui.painter().with_clip_rect(tl.rect);
     painter.line_segment(
-        [pos2(divider_x, tl.rect.min.y), pos2(divider_x, tl.rect.max.y)],
-        Stroke::new(
-            if response.hovered() || response.dragged() { 2.0 } else { 1.0 },
-            color,
-        ),
+        [
+            pos2(divider_x, tl.rect.min.y),
+            pos2(divider_x, tl.rect.max.y),
+        ],
+        Stroke::new(if hovered || active { 2.0 } else { 1.0 }, color),
     );
 
-    // Three small grip marks make the resize target discoverable.
+    // Small grip marks make the resize affordance visible without adding a wide bar.
     let grip_y = tl.rect.center().y;
-    for offset in [-5.0_f32, 0.0, 5.0] {
+    for offset in [-7.0_f32, -3.5, 0.0, 3.5, 7.0] {
         painter.line_segment(
-            [pos2(divider_x - 1.5, grip_y + offset), pos2(divider_x + 1.5, grip_y + offset)],
+            [
+                pos2(divider_x - 2.0, grip_y + offset),
+                pos2(divider_x + 2.0, grip_y + offset),
+            ],
             Stroke::new(1.0, color),
         );
     }
 
-    if response.hovered() || response.dragged() {
+    if hovered || active {
         ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
     }
 
