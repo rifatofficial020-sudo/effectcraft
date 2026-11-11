@@ -1,0 +1,46 @@
+
+name: Build EffectCraft - Windows x64
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    name: Windows x64 Build
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build EffectCraft
+        run: cargo build --release -p effectcraft --target x86_64-pc-windows-msvc
+
+      - name: Prepare release files
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path release
+          Copy-Item target/x86_64-pc-windows-msvc/release/effectcraft.exe release/
+
+      - name: Upload Windows x64 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: EffectCraft-Windows-x64
+          path: release/effectcraft.exe
+          if-no-files-found: error
